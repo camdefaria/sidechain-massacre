@@ -1,7 +1,9 @@
 // Thin wrapper around the bits of the Spotify Web API this game needs.
-// Deliberately avoids endpoints Spotify locked behind Extended Quota Mode approval
-// (Recommendations, Audio Features/Analysis, Related Artists) — this uses Search +
-// Playlist Items, which stay available in Development Mode.
+// Deliberately avoids endpoints Spotify locked behind Extended Quota Mode approval or
+// ownership restrictions (Recommendations, Audio Features/Analysis, Related Artists, and
+// fetching tracks from playlists your app doesn't own — that last one returns a 403 as of
+// Spotify's Nov 2024 policy change). Track Search has none of those restrictions, so
+// discovery is built entirely on it.
 
 import { getValidAccessToken } from './auth.js';
 
@@ -25,59 +27,50 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-// Search terms that surface trending/emerging dance music without needing chart access
-// Spotify doesn't expose via public API. Plain keywords — the `genre:` field filter only
-// applies to track/artist search, not playlist search, so it silently returns nothing there.
+// `genre:` and `year:` field filters ARE supported for track search (unlike playlist
+// search, where they silently return nothing). Mix a few angles for variety; "Emerging"
+// leans on a recent year range as a rough proxy for newer releases since there's no public
+// "new/rising" flag on Track Search itself.
 const DISCOVERY_QUERIES = [
-  { label: 'Trending', q: 'dance hits' },
-  { label: 'Trending', q: 'edm' },
-  { label: 'Emerging', q: 'future house' },
-  { label: 'Emerging', q: 'tech house' },
-  { label: 'Big Room', q: 'big room house' },
-  { label: 'Electronic', q: 'electronic dance' },
+  { label: 'Trending', q: 'genre:dance' },
+  { label: 'Trending', q: 'genre:edm' },
+  { label: 'Trending', q: 'genre:house' },
+  { label: 'Emerging', q: 'genre:"future house" year:2025-2026' },
+  { label: 'Emerging', q: 'genre:"tech house" year:2025-2026' },
+  { label: 'Big Room', q: 'genre:"big room"' },
 ];
 
-export async function findPlaylists(query = 'dance edm', limit = 10) {
-  const params = new URLSearchParams({ q: query, type: 'playlist', limit: String(limit) });
+export async function searchTracks(query, limit = 20) {
+  const params = new URLSearchParams({ q: query, type: 'track', limit: String(limit) });
   const json = await apiFetch(`/search?${params.toString()}`);
-  return (json.playlists?.items || []).filter(Boolean);
+  return (json.tracks?.items || []).filter((t) => t && t.uri && t.uri.startsWith('spotify:track:'));
 }
 
-export async function getPlaylistTracks(playlistId, limit = 50) {
-  const params = new URLSearchParams({
-    limit: String(limit),
-    fields: 'items(track(id,name,uri,duration_ms,popularity,preview_url,artists(name),album(name,images)))',
-  });
-  const json = await apiFetch(`/playlists/${playlistId}/tracks?${params.toString()}`);
-  return (json.items || [])
-    .map((item) => item.track)
-    .filter((t) => t && t.uri && t.uri.startsWith('spotify:track:'));
-}
-
-// Builds a round's worth of candidate tracks by combining a couple of discovery queries.
-// Falls back gracefully if one search comes back empty.
+// Builds a round's worth of candidate tracks by combining a few discovery queries.
+// Falls back gracefully if one search comes back empty or errors.
 export async function loadDiscoveryQueue({ trackCount = 20 } = {}) {
   const collected = [];
   for (const dq of DISCOVERY_QUERIES) {
     try {
-      const playlists = await findPlaylists(dq.q, 5);
-      for (const pl of playlists) {
-        if (collected.length >= trackCount) break;
-        const tracks = await getPlaylistTracks(pl.id, 10);
-        collected.push(...tracks.map((t) => ({ ...t, discoveredVia: dq.label, playlistName: pl.name })));
-      }
+      const tracks = await searchTracks(dq.q, 15);
+      collected.push(...tracks.map((t) => ({ ...t, discoveredVia: dq.label })));
     } catch (e) {
-      console.warn(`Discovery query "${dq.label}" failed:`, e.message);
+      console.warn(`Discovery query "${dq.label}" (${dq.q}) failed:`, e.message);
     }
     if (collected.length >= trackCount) break;
   }
-  // de-dupe by track id
+  // de-dupe by track id, then shuffle so replays don't always open with the same track
   const seen = new Set();
-  return collected.filter((t) => {
+  const deduped = collected.filter((t) => {
     if (seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
   });
+  for (let i = deduped.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deduped[i], deduped[j]] = [deduped[j], deduped[i]];
+  }
+  return deduped;
 }
 
 export async function getMe() {
