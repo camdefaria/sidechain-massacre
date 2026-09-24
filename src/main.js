@@ -6,17 +6,18 @@ import { buildPool, roundDetails, inWindow, fetchCredits, useMock } from './data
 import { MODES, modeById } from './data/modes.js';
 
 // ---------- tuning ----------
-const ROUND_MS = 10000; // max time per song
+const ROUND_MS = 20000; // max time per song
 const PAYOUT = [
-  { until: 3000, pct: 1 },
-  { until: 5000, pct: 0.75 },
-  { until: 7000, pct: 0.5 },
+  { until: 5000, pct: 1 },
+  { until: 10000, pct: 0.75 },
+  { until: 14000, pct: 0.5 },
+  { until: 17000, pct: 0.25 },
   { until: Infinity, pct: 0 }, // last 3 seconds: correct, but no move
 ];
-const HORDE_START = -6; // moves behind the player at the start
-const HORDE_SEC_PER_MOVE = [9, 8, 7, 6, 5]; // by room, then scaled by the mode's pace
-const NOISE = 0.5; // wrong guess: horde gains this many moves
-const HINT_COST = 1.5;
+const HORDE_START = -8; // moves behind the player at the start
+const HORDE_SEC_PER_MOVE = [18, 16, 14, 12, 10]; // by room, then scaled by the mode's pace
+// Wrong-guess noise and hint cost come from the mode (see modes.js).
+const DANGER = { warn: 5, close: 3, critical: 1.5 }; // gap in moves between you and the horde
 const WALK_SPEED = 3; // moves per second while animating forward
 const REVEAL_MS = 3500;
 
@@ -271,9 +272,20 @@ function renderGame() {
         <div class="stat right"><span class="k">CLOCK</span><span class="v" id="clockT">10.0s</span></div>
       </header>
       <div class="clock" aria-hidden="true"><div class="zones">${zones}</div><div class="needle" id="needle"></div></div>
+      <div class="route" id="route">
+        <span class="rlabel">ENTRANCE</span>
+        <div class="rtrack">
+          <div class="rgap" id="rgap"></div>
+          <span class="rmark horde" id="rhorde" title="The horde"></span>
+          <span class="rmark you" id="ryou" title="You"></span>
+        </div>
+        <span class="rlabel exit">EXIT</span>
+        <span class="rstatus" id="rstatus">Safe for now</span>
+      </div>
       <div class="stage">
         <canvas id="club" class="pix"></canvas>
         <div class="badge" id="emerging" hidden>EMERGING ×1.5</div>
+        <div class="warnbanner" id="warn" hidden></div>
         <div class="reveal" id="reveal" hidden></div>
         <canvas id="scare" class="pix scare" hidden></canvas>
       </div>
@@ -283,7 +295,7 @@ function renderGame() {
         <li data-k="artist"><b>ARTIST</b> +1</li>
         <li data-k="credit"><b>FEAT / CREDIT</b> +½ <i id="creditCount">0/${CREDIT_CAP}</i></li>
       </ul>
-      <p class="payout">Answer in 0–3s for full moves · 3–5s 75% · 5–7s 50% · last 3s you don't move</p>
+      <p class="payout">Answer in 0–5s for full moves · 5–10s 75% · 10–14s 50% · 14–17s 25% · last 3s you don't move</p>
       <form class="guess" id="guessForm" autocomplete="off">
         <input id="guess" placeholder="Name the track, label or artist" maxlength="120" disabled>
         <button type="button" class="btn small ghost" id="hintBtn">Hint</button>
@@ -402,7 +414,7 @@ function submitGuess() {
   } else if (res.kind === 'dupe') {
     feed('Already got that one.', 'dim');
   } else if (res.kind === 'miss') {
-    run.horde += NOISE;
+    run.horde += run.mode.noise;
     feed(`"${esc(g)}" isn't it. They heard you.`, 'miss');
     shake();
   }
@@ -415,9 +427,9 @@ function useHint() {
   const r = state.run?.round;
   if (!r || r.hinted || state.run.paused || r.ended) return;
   r.hinted = true;
-  state.run.horde += HINT_COST;
+  state.run.horde += state.run.mode.hintCost;
   document.getElementById('hintline').textContent = hintText(r.details);
-  feed(`Hint used. The horde gains ${num(HINT_COST)}.`, 'miss');
+  feed(`Hint used. The horde gains ${num(state.run.mode.hintCost)}.`, 'miss');
 }
 
 function advance(m) {
@@ -506,13 +518,14 @@ function loop(now) {
     beatCount: Math.floor(beatPos),
     player: { moves: run.shown, walking, sprite: character() },
     horde: { moves: run.horde },
-    danger: Math.max(0, Math.min(1, 1 - (run.shown - run.horde) / 6)),
+    danger: Math.max(0, Math.min(1, (DANGER.warn - (run.shown - run.horde)) / (DANGER.warn - DANGER.critical))),
   });
 
   const el = r?.startedAt ? Math.min(ROUND_MS, r.elapsed) : 0;
   document.getElementById('runT').textContent = fmt(run.activeMs);
   const clock = document.getElementById('clockT');
   clock.textContent = secs(ROUND_MS - el);
+  updateDanger(run);
   clock.dataset.zone = PAYOUT.findIndex((p) => el < p.until);
   document.getElementById('needle').style.left = `${(el / ROUND_MS) * 100}%`;
   document.getElementById('roomN').textContent = ROOMS[roomIndexAt(run.shown)].name;
@@ -589,6 +602,39 @@ function renderEnd() {
   if (!next) prepareNext().then(() => { again.disabled = false; }).catch(() => {});
   document.getElementById('chars').onclick = () => { state.screen = 'select'; render(); };
   document.getElementById('modes').onclick = () => { state.screen = 'mode'; render(); };
+}
+
+// ---------- danger feedback ----------
+function updateDanger(run) {
+  const gap = run.shown - run.horde;
+  const pct = (m) => `${Math.max(0, Math.min(100, (m / EXIT_MOVES) * 100))}%`;
+  document.getElementById('ryou').style.left = pct(run.shown);
+  document.getElementById('rhorde').style.left = pct(run.horde);
+  const g = document.getElementById('rgap');
+  g.style.left = pct(Math.max(0, run.horde));
+  g.style.width = `calc(${pct(run.shown)} - ${pct(Math.max(0, run.horde))})`;
+
+  const level = gap <= DANGER.critical ? 'critical' : gap <= DANGER.close ? 'close' : gap <= DANGER.warn ? 'warn' : 'safe';
+  const status = {
+    safe: `Safe for now · ${num(Math.max(0, gap))} moves ahead`,
+    warn: `They're gaining · ${num(gap)} moves ahead`,
+    close: `They're right behind you · ${num(gap)} moves`,
+    critical: `RUN · ${num(Math.max(0, gap))} moves`,
+  }[level];
+  const el = document.getElementById('rstatus');
+  el.textContent = status;
+  const main = document.querySelector('.game');
+  if (main.dataset.danger !== level) {
+    main.dataset.danger = level;
+    const w = document.getElementById('warn');
+    if (level === 'close' || level === 'critical') {
+      w.textContent = level === 'critical' ? 'THEY ARE ON YOU' : "THEY'RE RIGHT BEHIND YOU";
+      w.hidden = false;
+    } else {
+      w.hidden = true;
+    }
+    if (level === 'close' || level === 'critical') shake();
+  }
 }
 
 // ---------- ui bits ----------

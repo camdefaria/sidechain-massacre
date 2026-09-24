@@ -342,13 +342,18 @@ export class Club {
   }
 
   drawVignette(c, s) {
-    const g = c.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, 200);
+    const d = s.danger || 0;
+    // the room closes in as the horde closes in
+    const g = c.createRadialGradient(W / 2, H / 2, 70 - d * 40, W / 2, H / 2, 200 - d * 50);
     g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, `rgba(0,0,0,${0.55 + (s.danger || 0) * 0.3})`);
+    g.addColorStop(1, `rgba(${Math.round(40 * d)},0,0,${0.5 + d * 0.4})`);
     c.fillStyle = g;
     c.fillRect(0, 0, W, H);
-    if (s.danger > 0.5) {
-      c.fillStyle = `rgba(224,18,44,${(s.danger - 0.5) * 0.25 * (0.5 + 0.5 * Math.sin(s.t * 10))})`;
+    if (d > 0) {
+      // heartbeat: a red pulse that speeds up with danger
+      const rate = 3 + d * 9;
+      const beat = Math.pow(Math.max(0, Math.sin(s.t * rate)), 6);
+      c.fillStyle = `rgba(224,18,44,${d * 0.28 * beat})`;
       c.fillRect(0, 0, W, H);
     }
   }

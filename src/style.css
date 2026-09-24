@@ -250,3 +250,37 @@ a { color: var(--sc-orange); }
 #clockT[data-zone='2'] { color: #b85a2e; }
 #clockT[data-zone='3'] { color: var(--red); }
 .payout { margin: -4px 0 0; font-size: 11px; color: var(--muted); text-align: center; }
+
+/* ---------- route bar + danger ---------- */
+.route { display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 8px; row-gap: 4px; }
+.rlabel { font: 700 9px/1 var(--display); color: var(--muted); letter-spacing: 0.06em; }
+.rlabel.exit { color: var(--ok); }
+.rtrack { position: relative; height: 8px; background: var(--panel); border: 1px solid var(--line); }
+.rgap { position: absolute; top: 0; bottom: 0; background: rgba(224, 18, 44, 0.25); }
+.rmark { position: absolute; top: 50%; width: 12px; height: 12px; margin-left: -6px; transform: translateY(-50%); border: 2px solid var(--bg); }
+.rmark.you { background: var(--sc-orange); z-index: 2; }
+.rmark.horde { background: #8a9a78; box-shadow: 0 0 6px rgba(138, 154, 120, 0.8); }
+.rstatus { grid-column: 1 / -1; text-align: center; font: 700 11px/1.2 var(--display); letter-spacing: 0.05em; color: var(--ok); }
+
+.warnbanner {
+  position: absolute; left: 0; right: 0; top: 42%;
+  text-align: center; z-index: 2; pointer-events: none;
+  font: 700 clamp(18px, 5vw, 40px)/1 var(--display);
+  color: #fff; text-shadow: 3px 3px 0 var(--red), 0 0 24px rgba(224, 18, 44, 0.9);
+  animation: blink 0.8s steps(2, jump-none) infinite;
+}
+@keyframes blink { 50% { opacity: 0.25; } }
+
+.game[data-danger='warn'] .rstatus { color: #f0a13a; }
+.game[data-danger='close'] .rstatus, .game[data-danger='critical'] .rstatus { color: var(--red); }
+.game[data-danger='close'] .stage { animation: pulseRed 1s ease-in-out infinite; }
+.game[data-danger='critical'] .stage { animation: pulseRed 0.45s ease-in-out infinite; }
+.game[data-danger='critical'] .warnbanner { animation-duration: 0.4s; }
+.game[data-danger='close'] .rgap, .game[data-danger='critical'] .rgap { background: rgba(224, 18, 44, 0.6); }
+@keyframes pulseRed {
+  0%, 100% { box-shadow: 0 0 0 1px var(--line); }
+  50% { box-shadow: 0 0 0 3px var(--red), 0 0 28px rgba(224, 18, 44, 0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .warnbanner, .game[data-danger] .stage { animation: none; }
+}

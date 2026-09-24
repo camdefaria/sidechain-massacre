@@ -21,13 +21,14 @@ array; those always load first. Harder modes also make the horde faster (`hordeP
 
 ## Scoring
 
-Every song gets 10 seconds. How fast you answer sets the payout:
+Every song gets 20 seconds. How fast you answer sets the payout:
 
 | Answer time | Payout |
 | --- | --- |
-| 0–3s | full moves |
-| 3–5s | 75% |
-| 5–7s | 50% |
+| 0–5s | full moves |
+| 5–10s | 75% |
+| 10–14s | 50% |
+| 14–17s | 25% |
 | last 3s | correct, but no move |
 
 
@@ -41,7 +42,7 @@ Type any guess; the game works out what you meant. Base moves:
 | Featured artist or credit | +½ | Featured artists, second main artists, and MusicBrainz credits (writers, producers, engineers). Up to 3 per track. |
 
 - **Emerging** tracks (new releases or low Deezer popularity) pay 1.5x.
-- A wrong guess makes noise: the horde gains ½ a move. A hint costs 1½.
+- A wrong guess makes noise and a hint costs ground; both are set per mode (easier modes cost less).
 - 40 moves to the exit. Your score is escape time, counted only while the clock runs.
 - Tuning lives at the top of `src/main.js` (horde speed, costs) and in
   `src/game/match.js` (move values).
