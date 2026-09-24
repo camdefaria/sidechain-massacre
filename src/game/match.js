@@ -93,7 +93,14 @@ export function answerSheet(d, credits = []) {
   d.featuredArtists.map(normalize).forEach((n) => n && creditNames.add(n));
   credits.map(normalize).forEach((n) => n && !main.includes(n) && creditNames.add(n));
   return {
-    titles: [...new Set([normalize(coreTitle(d.titleShort)), normalize(coreTitle(d.title))])].filter(Boolean),
+    titles: [
+      ...new Set([
+        normalize(coreTitle(d.titleShort)),
+        normalize(coreTitle(d.title)),
+        // also accept the title with every bracketed part dropped: "(It Goes Like) Nanana" -> "Nanana"
+        normalize(coreTitle(d.titleShort).replace(/[([{][^)\]}]*[)\]}]/g, ' ')),
+      ]),
+    ].filter(Boolean),
     labels: labelParts(d.label),
     mainArtists: main,
     credits: [...creditNames],

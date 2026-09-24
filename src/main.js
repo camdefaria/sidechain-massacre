@@ -14,7 +14,7 @@ const PAYOUT = [
   { until: 17000, pct: 0.25 },
   { until: Infinity, pct: 0 }, // last 3 seconds: correct, but no move
 ];
-const HORDE_START = -8; // moves behind the player at the start
+const HORDE_START = -12; // moves behind the player at the start
 const HORDE_SEC_PER_MOVE = [18, 16, 14, 12, 10]; // by room, then scaled by the mode's pace
 // Wrong-guess noise and hint cost come from the mode (see modes.js).
 const DANGER = { warn: 5, close: 3, critical: 1.5 }; // gap in moves between you and the horde
@@ -133,7 +133,18 @@ function renderTitle() {
   app.innerHTML = `
     <main class="screen title">
       ${LOGO}
-      <p class="tagline">The red room is packed and the crowd has turned. A track is playing and you've got 10 seconds. Name it, name the label, name the artist. Every right answer moves you closer to the exit.</p>
+      <p class="tagline">The red room is packed and the crowd has turned. Name the music to get out.</p>
+      <section class="howto" aria-labelledby="howto-h">
+        <h2 id="howto-h">How to play</h2>
+        <ol>
+          <li><b>A song plays.</b> You get <b>20 seconds</b> per song.</li>
+          <li><b>Type what you hear</b> in the box and hit Enter: the song title, the artist, or the record label. No need to say which, the game figures it out.</li>
+          <li><b>Right answers move you toward the exit.</b> Song title +3, label +2, artist +1, a featured artist or credit +½. You can get all of them on one song.</li>
+          <li><b>Be quick.</b> Answers in the first 5 seconds pay in full, then less. In the last 3 seconds a right answer counts but doesn't move you.</li>
+          <li><b>The zombies never stop.</b> Wrong guesses and hints let them catch up. Watch the bar under the clock. Reach the exit before they reach you.</li>
+        </ol>
+        <p class="tips">Stuck? Hit <b>Hint</b> for the first letters, or <b>Skip</b> (Esc) to move to the next song.</p>
+      </section>
       <button class="btn primary" id="go">Enter the club</button>
       ${useMock() ? '<p class="mocknote">Mock mode: offline test tracks, no audio.</p>' : ''}
       ${ATTRIB}

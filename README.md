@@ -8,16 +8,17 @@ shambles after you the whole time.
 
 Picked on the title screen, before characters. Defined in `src/data/modes.js`.
 
-| Mode | Level | Pool | Window |
-| --- | --- | --- | --- |
-| Fan.Clacker | Easy | The biggest dance-pop and EDM earworms | 10 years |
-| FISHERman | Medium | Top-selling tech house earworms | 10 years |
-| Tastemaker | Hard | Recognizable hits across dubstep, future bass, DnB, trance, hardstyle, house | 15 years |
-| IDentifier | Veteran | Classic dance cuts plus Deezer's newest label releases (every third track) | no limit |
+| Mode | Level | Pool |
+| --- | --- | --- |
+| Fan.Clacker | Easy | Festival anthems: Levels, Animals, Clarity, Don't You Worry Child, and peers |
+| FISHERman | Medium | Tech house: Losing It, Turn Off The Lights, Do It To It, Latch, and peers |
+| Tastemaker | Hard | Big tunes across EDM subgenres: Bangarang, Nanana, Gecko, Spaceman, and peers |
+| IDentifier | Veteran | Most-streamed tracks of the last 4 years from Keinemusik, Cloonee, Prospa, Riordan, Jackie Hollander, Max Styler, Josh Baker, Oskar Med K and other up-and-comers |
 
-Each mode seeds its pool by searching public Deezer playlists. To hand-curate, paste
-playlist IDs (the number in a deezer.com/playlist/ link) into that mode's `playlists`
-array; those always load first. Harder modes also make the horde faster (`hordePace`).
+Every track comes from a hand-picked list in `src/data/modes.js` (`seeds` as
+"Artist | Title", or `artists` for their top tracks), resolved on Deezer by
+`api/pool.js` and cached for 6 hours. Nothing outside those lists can show up. Tracks
+Deezer can't find are logged in the browser console as `[pool] not found`.
 
 ## Scoring
 

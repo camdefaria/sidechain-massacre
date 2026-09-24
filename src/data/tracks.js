@@ -4,8 +4,6 @@
 import { MOCK_POOL, mockDetails } from './mock.js';
 
 const EMERGING_RANK = 350000; // below this Deezer rank, a track counts as emerging (1.5x)
-const PLAYLISTS_PER_QUERY = 2;
-const TRACKS_PER_PLAYLIST = 40;
 
 export const useMock = () => new URLSearchParams(location.search).has('mock');
 
@@ -30,59 +28,13 @@ function slim(t, source) {
 
 export async function buildPool(mode) {
   if (useMock()) return MOCK_POOL.map((t) => ({ ...t }));
-
-  const found = [];
-  const addTracks = (list, source) => {
-    for (const t of list || []) {
-      if (!t?.preview || t.readable === false) continue;
-      if (mode.minRank && (t.rank ?? 0) < mode.minRank) continue;
-      found.push(slim(t, source));
-    }
-  };
-
-  // 1. hand-picked playlists
-  const curated = await Promise.allSettled(
-    mode.playlists.map((id) => dz(`playlist/${id}/tracks`, { limit: 100 }))
-  );
-  curated.forEach((r) => r.status === 'fulfilled' && addTracks(r.value.data, 'curated'));
-
-  // 2. keyword-seeded playlists
-  const searches = await Promise.allSettled(
-    mode.queries.map((q) => dz('search/playlist', { q, limit: PLAYLISTS_PER_QUERY }))
-  );
-  const playlistIds = [
-    ...new Set(searches.flatMap((r) => (r.status === 'fulfilled' ? (r.value.data || []).map((p) => p.id) : []))),
-  ];
-  const lists = await Promise.allSettled(
-    playlistIds.map((id) => dz(`playlist/${id}/tracks`, { limit: TRACKS_PER_PLAYLIST }))
-  );
-  lists.forEach((r) => r.status === 'fulfilled' && addTracks(r.value.data, 'search'));
-
-  // 3. Veteran mode: newest Dance/Electro releases as "artists to watch"
-  const fresh = [];
-  if (mode.newReleases) {
-    const rel = await Promise.allSettled([113, 106].map((g) => dz(`editorial/${g}/releases`, { limit: 15 })));
-    const albums = shuffle(rel.flatMap((r) => (r.status === 'fulfilled' ? r.value.data || [] : []))).slice(0, 8);
-    const tr = await Promise.allSettled(albums.map((a) => dz(`album/${a.id}/tracks`, { limit: 2 })));
-    tr.forEach((r, i) => {
-      if (r.status !== 'fulfilled') return;
-      for (const t of r.value.data || []) {
-        if (t.preview) fresh.push({ ...slim(t, 'new-release'), albumId: albums[i].id, cover: albums[i].cover_medium || null, emerging: true });
-      }
-    });
-  }
-
-  const seen = new Set();
-  const pool = shuffle(found.filter((t) => (seen.has(t.id) ? false : seen.add(t.id)))).map((t) => ({
-    ...t,
-    emerging: t.rank != null && t.rank < EMERGING_RANK,
-  }));
-  // slot a new release in every third track
-  const freshQ = shuffle(fresh.filter((t) => !seen.has(t.id)));
-  for (let i = 2; i < pool.length && freshQ.length; i += 3) pool.splice(i, 0, freshQ.shift());
-
-  if (!pool.length) throw new Error('Deezer returned no playable tracks for this mode.');
-  return pool;
+  const r = await fetch(`/api/pool?mode=${encodeURIComponent(mode.id)}`);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body?.error || `pool ${r.status}`);
+  if (body.missing?.length) console.info(`[pool] not found on Deezer for ${mode.id}:`, body.missing);
+  const list = shuffle((body.tracks || []).map((t) => ({ ...t, emerging: t.source === 'artist' && t.rank != null && t.rank < EMERGING_RANK })));
+  if (!list.length) throw new Error('No playable tracks found for this mode.');
+  return list;
 }
 
 // Everything the matcher needs for one round.
