@@ -77,9 +77,9 @@ export async function buildPool(mode) {
     ...t,
     emerging: t.rank != null && t.rank < EMERGING_RANK,
   }));
-  // slot a new release in every fourth track
+  // slot a new release in every third track
   const freshQ = shuffle(fresh.filter((t) => !seen.has(t.id)));
-  for (let i = 3; i < pool.length && freshQ.length; i += 4) pool.splice(i, 0, freshQ.shift());
+  for (let i = 2; i < pool.length && freshQ.length; i += 3) pool.splice(i, 0, freshQ.shift());
 
   if (!pool.length) throw new Error('Deezer returned no playable tracks for this mode.');
   return pool;

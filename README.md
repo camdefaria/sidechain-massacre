@@ -10,10 +10,10 @@ Picked on the title screen, before characters. Defined in `src/data/modes.js`.
 
 | Mode | Level | Pool | Window |
 | --- | --- | --- | --- |
-| Fan.Clacker | Easy | Big-room and festival EDM, popular tracks only | 10 years |
-| FISHERman | Medium | Tech house party anthems | 10 years |
-| Tastemaker | Hard | Dubstep, future bass, house, drum & bass | 15 years |
-| IDentifier | Veteran | Techno, house, garage, classics, plus Deezer's newest releases | no limit |
+| Fan.Clacker | Easy | The biggest dance-pop and EDM earworms | 10 years |
+| FISHERman | Medium | Top-selling tech house earworms | 10 years |
+| Tastemaker | Hard | Recognizable hits across dubstep, future bass, DnB, trance, hardstyle, house | 15 years |
+| IDentifier | Veteran | Classic dance cuts plus Deezer's newest label releases (every third track) | no limit |
 
 Each mode seeds its pool by searching public Deezer playlists. To hand-curate, paste
 playlist IDs (the number in a deezer.com/playlist/ link) into that mode's `playlists`

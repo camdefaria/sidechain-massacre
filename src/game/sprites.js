@@ -8,7 +8,7 @@ const LEGS_STD_B = ['...pp..pp...', '..ss....ss..', '..ff....ff..'];
 export const CHARACTERS = [
   {
     id: 'summit',
-    name: 'The Summit',
+    name: 'The Expert',
     blurb: 'Tank top, dark hair, the loudest shades in the building. First on the floor, last to leave.',
     body: [
       '...hhhhh....',
