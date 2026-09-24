@@ -26,11 +26,15 @@ async function apiFetch(path, options = {}) {
 }
 
 // Search terms that surface trending/emerging dance music without needing chart access
-// Spotify doesn't expose via public API. Mix editorial-style queries for variety.
+// Spotify doesn't expose via public API. Plain keywords — the `genre:` field filter only
+// applies to track/artist search, not playlist search, so it silently returns nothing there.
 const DISCOVERY_QUERIES = [
-  { label: 'Trending', q: 'genre:dance', sort: 'popular' },
-  { label: 'Emerging', q: 'genre:"future house" OR genre:"tech house"', sort: 'new' },
-  { label: 'Big Room', q: 'genre:"big room" OR genre:edm', sort: 'popular' },
+  { label: 'Trending', q: 'dance hits' },
+  { label: 'Trending', q: 'edm' },
+  { label: 'Emerging', q: 'future house' },
+  { label: 'Emerging', q: 'tech house' },
+  { label: 'Big Room', q: 'big room house' },
+  { label: 'Electronic', q: 'electronic dance' },
 ];
 
 export async function findPlaylists(query = 'dance edm', limit = 10) {
