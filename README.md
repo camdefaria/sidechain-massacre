@@ -1,63 +1,51 @@
 # Sidechain Massacre
 
-A rhythm/reflex browser game. A number flashes on the beat over a real track streamed
-from your own Spotify account — memorize it, type it into the bubble, and keep moving
-through the club before the crowd catches you.
+A lo-bit browser game. You're stuck in a red-lit club full of zombies in speedos. A real
+dance track plays. Name it and your character moves toward the back exit. The horde
+shambles after you the whole time.
+
+## Scoring
+
+Type any guess; the game works out what you meant.
+
+| Guess | Moves | Rule |
+| --- | --- | --- |
+| Track name | +3 | 1 typo allowed. " - Radio Edit", "(feat. X)", "(Remix)" and other version tags are ignored. |
+| Label | +2 | 90% match. "Records", "Recordings", "Music", "Ltd" ignored. "A / B" or "A under exclusive license to B" count as either. |
+| Main artist | +1 | 1 typo allowed. |
+| Featured artist or credit | +½ | Featured artists, second main artists, and MusicBrainz credits (writers, producers, engineers). Up to 3 per track. |
+
+- **Emerging** tracks (new releases or low Deezer popularity) pay 1.5x.
+- A wrong guess makes noise: the horde gains ½ a move. A hint costs 1½.
+- 40 moves to the exit. Your score is escape time, counted only while tracks are playing.
+- Tuning lives at the top of `src/main.js` (horde speed, costs) and in
+  `src/game/match.js` (move values).
 
 ## How it works
 
-- **Login:** Spotify Authorization Code + PKCE (`src/spotify/auth.js`) — no client secret
-  needed, safe for a public static site. Requires **Spotify Premium** to hear real audio.
-- **Playback:** the Web Playback SDK (`src/spotify/player.js`) turns the browser tab into
-  a real Spotify Connect device, so audio is licensed and streamed by Spotify itself.
-- **Track discovery:** `src/spotify/api.js` searches for dance/EDM playlists and pulls
-  tracks from them. Deliberately avoids the Recommendations / Audio Features endpoints,
-  which Spotify now gates behind Extended Quota approval — this uses Search + Playlist
-  Items, which work from day one in Development Mode.
-- **Game loop:** `src/game/rounds.js` + the game screen in `src/main.js` — flash a number,
-  type it fast, advance rooms, watch the zombie meter.
-- **Characters:** `src/game/characters.js` — starter + unlockable roster, saved to
-  `localStorage`. Current portraits are CSS-drawn placeholders (see "Next up" below).
+- `api/deezer.js`: Vercel function proxying a small allowlist of Deezer API paths
+  (Deezer doesn't allow direct browser calls). Charts: Dance (113) and Electro (106).
+- `api/credits.js`: looks up credits on MusicBrainz by ISRC. Coverage for new dance
+  releases is uneven, so credits are a bonus.
+- `src/data/tracks.js`: builds the track pool and fetches answers per round.
+- `src/game/match.js`: fuzzy matching and scoring.
+- `src/game/club.js`: the 320x180 pixel club, route, horde, lighting.
+- `src/game/sprites.js`: hand-drawn 12x16 sprites for the five characters and the zombies.
 
 ## Local dev
 
 ```bash
 npm install
-cp .env.example .env   # fill in your Spotify Client ID
-npm run dev
+npm run dev          # http://127.0.0.1:5173
 ```
 
-Open the URL Vite prints (default `http://127.0.0.1:5173`). Make sure that exact URL +
-`/callback` is registered as a Redirect URI in your Spotify app dashboard.
+Add `?mock` to the URL to play with offline test tracks (no audio, no network).
 
-## Deploying to Vercel
+## Licensing notes
 
-1. Import this GitHub repo into Vercel (vercel.com → Add New → Project).
-2. Framework preset: Vite (auto-detected).
-3. Add environment variables in the Vercel project settings:
-   - `VITE_SPOTIFY_CLIENT_ID` = your Spotify app's Client ID
-   - `VITE_REDIRECT_URI` = `https://<your-vercel-domain>/callback`
-4. Add that same `https://<your-vercel-domain>/callback` as a Redirect URI in the Spotify
-   dashboard (Basic Information → Edit).
-5. Deploy. `vercel.json` already routes all paths to `index.html` so `/callback` resolves
-   correctly.
-
-## Spotify app status
-
-New apps start in **Development Mode**, capped at 25 allowlisted Spotify accounts (added
-under the app's "User Management" tab by email — add your friends there to let them play
-before going public). To open it up to anyone, apply for **Extended Quota Mode** from the
-app dashboard once it's working end-to-end.
-
-## Next up / open items
-
-- Real zombie + club art. Portraits and the arena are placeholder CSS right now —
-  swap in real images by dropping files under `public/` and pointing a character's
-  `image` field (in `characters.js`) at them.
-- Right-of-publicity note: using real DJs' likenesses (Dom Dolla, deadmau5, etc.) for a
-  publicly distributed game carries some legal risk even as caricature/parody. Worth a
-  second look before a wide public launch.
-- Currently every round flashes a random number unrelated to the track's actual timeline.
-  A tighter version could sync flashes to the track's beat grid, but Spotify's Audio
-  Analysis endpoint (which exposes beat timestamps) is one of the ones now gated behind
-  Extended Quota approval — revisit once that's granted.
+- Audio is Deezer's 30-second previews. Deezer's community guidance allows this for
+  non-commercial games with attribution (shown in-game). Commercial use needs Deezer's
+  sign-off.
+- Spotify is no longer used: its Developer Policy prohibits games.
+- Characters are original or archetype designs. Get sign-off before using any real
+  artist's name or likeness.
