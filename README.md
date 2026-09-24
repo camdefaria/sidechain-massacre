@@ -4,9 +4,34 @@ A lo-bit browser game. You're stuck in a red-lit club full of zombies in speedos
 dance track plays. Name it and your character moves toward the back exit. The horde
 shambles after you the whole time.
 
+## Modes
+
+Picked on the title screen, before characters. Defined in `src/data/modes.js`.
+
+| Mode | Level | Pool | Window |
+| --- | --- | --- | --- |
+| Fan.Clacker | Easy | Big-room and festival EDM, popular tracks only | 10 years |
+| FISHERman | Medium | Tech house party anthems | 10 years |
+| Tastemaker | Hard | Dubstep, future bass, house, drum & bass | 15 years |
+| IDentifier | Veteran | Techno, house, garage, classics, plus Deezer's newest releases | no limit |
+
+Each mode seeds its pool by searching public Deezer playlists. To hand-curate, paste
+playlist IDs (the number in a deezer.com/playlist/ link) into that mode's `playlists`
+array; those always load first. Harder modes also make the horde faster (`hordePace`).
+
 ## Scoring
 
-Type any guess; the game works out what you meant.
+Every song gets 10 seconds. How fast you answer sets the payout:
+
+| Answer time | Payout |
+| --- | --- |
+| 0–3s | full moves |
+| 3–5s | 75% |
+| 5–7s | 50% |
+| last 3s | correct, but no move |
+
+
+Type any guess; the game works out what you meant. Base moves:
 
 | Guess | Moves | Rule |
 | --- | --- | --- |
@@ -17,7 +42,7 @@ Type any guess; the game works out what you meant.
 
 - **Emerging** tracks (new releases or low Deezer popularity) pay 1.5x.
 - A wrong guess makes noise: the horde gains ½ a move. A hint costs 1½.
-- 40 moves to the exit. Your score is escape time, counted only while tracks are playing.
+- 40 moves to the exit. Your score is escape time, counted only while the clock runs.
 - Tuning lives at the top of `src/main.js` (horde speed, costs) and in
   `src/game/match.js` (move values).
 

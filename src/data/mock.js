@@ -23,6 +23,7 @@ export function mockDetails(entry) {
     featuredArtists: t.feat,
     label: t.label,
     isrc: '',
+    releaseDate: '2021-06-04',
     bpm: 124,
     preview: SILENT,
     cover: null,

@@ -1,12 +1,11 @@
-// Builds the track pool from Deezer (via /api/deezer) and fetches per-round answer data.
-// Trending = Deezer's Dance (113) and Electro (106) charts.
-// Emerging = tracks off Deezer's newest editorial releases in those genres, or anything
-// with a low Deezer popularity rank. Emerging tracks pay out 1.5x moves.
+// Builds each mode's track pool from Deezer (via /api/deezer) and fetches per-round
+// answer data. See modes.js for what each mode pulls.
 
 import { MOCK_POOL, mockDetails } from './mock.js';
 
-export const GENRES = [113, 106]; // Dance, Electro
-const EMERGING_RANK = 350000; // Deezer `rank` runs roughly 0..1,000,000
+const EMERGING_RANK = 350000; // below this Deezer rank, a track counts as emerging (1.5x)
+const PLAYLISTS_PER_QUERY = 2;
+const TRACKS_PER_PLAYLIST = 40;
 
 export const useMock = () => new URLSearchParams(location.search).has('mock');
 
@@ -29,58 +28,64 @@ function slim(t, source) {
   };
 }
 
-export async function buildPool() {
+export async function buildPool(mode) {
   if (useMock()) return MOCK_POOL.map((t) => ({ ...t }));
 
-  const trending = [];
-  const emerging = [];
-
-  const charts = await Promise.allSettled(GENRES.map((g) => dz(`chart/${g}/tracks`, { limit: 50 })));
-  for (const c of charts) {
-    if (c.status !== 'fulfilled') continue;
-    for (const t of c.value.data || []) {
-      if (!t.preview) continue;
-      const s = slim(t, 'chart');
-      (s.rank != null && s.rank < EMERGING_RANK ? emerging : trending).push(s);
+  const found = [];
+  const addTracks = (list, source) => {
+    for (const t of list || []) {
+      if (!t?.preview || t.readable === false) continue;
+      if (mode.minRank && (t.rank ?? 0) < mode.minRank) continue;
+      found.push(slim(t, source));
     }
-  }
+  };
 
-  // New releases → a few tracks from each album
-  try {
-    const rel = await Promise.allSettled(GENRES.map((g) => dz(`editorial/${g}/releases`, { limit: 15 })));
-    const albums = rel.flatMap((r) => (r.status === 'fulfilled' ? r.value.data || [] : []));
-    shuffle(albums);
-    const picks = albums.slice(0, 8);
-    const tracks = await Promise.allSettled(picks.map((a) => dz(`album/${a.id}/tracks`, { limit: 3 })));
-    tracks.forEach((r, i) => {
+  // 1. hand-picked playlists
+  const curated = await Promise.allSettled(
+    mode.playlists.map((id) => dz(`playlist/${id}/tracks`, { limit: 100 }))
+  );
+  curated.forEach((r) => r.status === 'fulfilled' && addTracks(r.value.data, 'curated'));
+
+  // 2. keyword-seeded playlists
+  const searches = await Promise.allSettled(
+    mode.queries.map((q) => dz('search/playlist', { q, limit: PLAYLISTS_PER_QUERY }))
+  );
+  const playlistIds = [
+    ...new Set(searches.flatMap((r) => (r.status === 'fulfilled' ? (r.value.data || []).map((p) => p.id) : []))),
+  ];
+  const lists = await Promise.allSettled(
+    playlistIds.map((id) => dz(`playlist/${id}/tracks`, { limit: TRACKS_PER_PLAYLIST }))
+  );
+  lists.forEach((r) => r.status === 'fulfilled' && addTracks(r.value.data, 'search'));
+
+  // 3. Veteran mode: newest Dance/Electro releases as "artists to watch"
+  const fresh = [];
+  if (mode.newReleases) {
+    const rel = await Promise.allSettled([113, 106].map((g) => dz(`editorial/${g}/releases`, { limit: 15 })));
+    const albums = shuffle(rel.flatMap((r) => (r.status === 'fulfilled' ? r.value.data || [] : []))).slice(0, 8);
+    const tr = await Promise.allSettled(albums.map((a) => dz(`album/${a.id}/tracks`, { limit: 2 })));
+    tr.forEach((r, i) => {
       if (r.status !== 'fulfilled') return;
       for (const t of r.value.data || []) {
-        if (!t.preview) continue;
-        emerging.push({ ...slim(t, 'new-release'), albumId: picks[i].id, cover: picks[i].cover_medium || null });
+        if (t.preview) fresh.push({ ...slim(t, 'new-release'), albumId: albums[i].id, cover: albums[i].cover_medium || null, emerging: true });
       }
     });
-  } catch (e) {
-    console.warn('emerging releases failed', e);
   }
 
   const seen = new Set();
-  const dedupe = (arr) => arr.filter((t) => (seen.has(t.id) ? false : seen.add(t.id)));
-  const tr = shuffle(dedupe(trending));
-  const em = shuffle(dedupe(emerging)).map((t) => ({ ...t, emerging: true }));
+  const pool = shuffle(found.filter((t) => (seen.has(t.id) ? false : seen.add(t.id)))).map((t) => ({
+    ...t,
+    emerging: t.rank != null && t.rank < EMERGING_RANK,
+  }));
+  // slot a new release in every fourth track
+  const freshQ = shuffle(fresh.filter((t) => !seen.has(t.id)));
+  for (let i = 3; i < pool.length && freshQ.length; i += 4) pool.splice(i, 0, freshQ.shift());
 
-  // Roughly one emerging track in every three
-  const pool = [];
-  while (tr.length || em.length) {
-    if (tr.length) pool.push(tr.shift());
-    if (tr.length) pool.push(tr.shift());
-    if (em.length) pool.push(em.shift());
-  }
-  if (!pool.length) throw new Error('Deezer returned no playable tracks.');
+  if (!pool.length) throw new Error('Deezer returned no playable tracks for this mode.');
   return pool;
 }
 
-// Everything the matcher needs for one round. Fetched when the round starts so preview
-// URLs stay fresh and the answers aren't sitting in memory for the whole run.
+// Everything the matcher needs for one round.
 export async function roundDetails(entry) {
   if (useMock()) return mockDetails(entry);
 
@@ -101,6 +106,7 @@ export async function roundDetails(entry) {
     mainArtists: main,
     featuredArtists: featured,
     label: album?.label || '',
+    releaseDate: track.release_date || album?.release_date || '',
     isrc: track.isrc || '',
     bpm: track.bpm > 40 ? track.bpm : 124,
     preview: track.preview || entry.preview,
@@ -108,6 +114,14 @@ export async function roundDetails(entry) {
     link: track.link || `https://www.deezer.com/track/${track.id}`,
     emerging: !!entry.emerging,
   };
+}
+
+// True if the track's release year falls inside the mode's window.
+export function inWindow(details, mode) {
+  if (!mode.maxAgeYears) return true;
+  const y = parseInt(String(details.releaseDate).slice(0, 4), 10);
+  if (!y) return true; // unknown date: let it through rather than starve the pool
+  return y >= new Date().getFullYear() - mode.maxAgeYears;
 }
 
 // Writers/producers/engineers from MusicBrainz. Resolves to [] on any miss.

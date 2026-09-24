@@ -1,16 +1,24 @@
 import './style.css';
 import { CHARACTERS, spriteFrame } from './game/sprites.js';
 import { Club, ROOMS, EXIT_MOVES, roomIndexAt, drawJumpscare } from './game/club.js';
-import { answerSheet, addCredits, judge, hintText, MOVES, CREDIT_CAP, EMERGING_MULT } from './game/match.js';
-import { buildPool, roundDetails, fetchCredits, useMock } from './data/tracks.js';
+import { answerSheet, addCredits, judge, hintText, CREDIT_CAP } from './game/match.js';
+import { buildPool, roundDetails, inWindow, fetchCredits, useMock } from './data/tracks.js';
+import { MODES, modeById } from './data/modes.js';
 
 // ---------- tuning ----------
+const ROUND_MS = 10000; // max time per song
+const PAYOUT = [
+  { until: 3000, pct: 1 },
+  { until: 5000, pct: 0.75 },
+  { until: 7000, pct: 0.5 },
+  { until: Infinity, pct: 0 }, // last 3 seconds: correct, but no move
+];
 const HORDE_START = -6; // moves behind the player at the start
-const HORDE_SEC_PER_MOVE = [10, 8.5, 7, 6, 5]; // by room: horde speeds up deeper in
-const NOISE = 0.5; // wrong guess: horde lurches forward this many moves
+const HORDE_SEC_PER_MOVE = [9, 8, 7, 6, 5]; // by room, then scaled by the mode's pace
+const NOISE = 0.5; // wrong guess: horde gains this many moves
 const HINT_COST = 1.5;
-const WALK_SPEED = 3; // moves per second when animating forward
-const REVEAL_MS = 4000;
+const WALK_SPEED = 3; // moves per second while animating forward
+const REVEAL_MS = 3500;
 
 const ACCENT = getComputedStyle(document.documentElement).getPropertyValue('--sc-orange').trim() || '#ff5f15';
 const app = document.getElementById('app');
@@ -19,21 +27,64 @@ audio.preload = 'auto';
 
 const state = {
   screen: 'title',
+  modeId: load('sm_mode', 'fan'),
   characterId: load('sm_char', 'summit'),
-  pool: null,
-  poolError: null,
-  poolIndex: 0,
   run: null,
 };
+const mode = () => modeById(state.modeId);
+const character = () => CHARACTERS.find((c) => c.id === state.characterId) || CHARACTERS[0];
 
-let poolPromise = null;
-function ensurePool() {
-  if (!poolPromise) {
-    poolPromise = buildPool()
-      .then((p) => { state.pool = p; state.poolError = null; return p; })
-      .catch((e) => { state.poolError = e.message; poolPromise = null; throw e; });
+// ---------- pools + next-round prep ----------
+const pools = {}; // modeId -> { list, index, promise }
+let next = null; // { entry, details } ready to play
+let nextPromise = null;
+
+function ensurePool(m = mode()) {
+  const p = (pools[m.id] ||= { list: null, index: 0, promise: null });
+  if (p.list) return Promise.resolve(p);
+  if (!p.promise) {
+    p.promise = buildPool(m)
+      .then((list) => { p.list = list; return p; })
+      .catch((e) => { p.promise = null; throw e; });
   }
-  return poolPromise;
+  return p.promise;
+}
+
+// Finds the next track that has a preview and falls inside the mode's year window.
+let nextPromiseMode = null;
+function prepareNext() {
+  const m = mode();
+  if (next && next.modeId === m.id) return Promise.resolve(next);
+  next = null;
+  if (nextPromise && nextPromiseMode === m.id) return nextPromise;
+  nextPromiseMode = m.id;
+  const p = (async () => {
+    const pool = await ensurePool(m);
+    for (let tries = 0; tries < 25; tries++) {
+      const entry = pool.list[pool.index % pool.list.length];
+      pool.index++;
+      try {
+        const details = await roundDetails(entry);
+        if (!details.preview || !inWindow(details, m)) continue;
+        if (state.modeId !== m.id) return null;
+        next = { entry, details, modeId: m.id };
+        return next;
+      } catch {
+        /* skip unplayable track */
+      }
+    }
+    throw new Error('Could not find a playable track in this mode.');
+  })();
+  nextPromise = p;
+  p.finally(() => { if (nextPromise === p) nextPromise = null; }).catch(() => {});
+  return p;
+}
+
+function takeNext() {
+  const n = next;
+  next = null;
+  prepareNext().catch(() => {});
+  return n;
 }
 
 // ---------- helpers ----------
@@ -47,8 +98,9 @@ const fmt = (ms) => {
   const r = Math.floor(ms % 1000);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}`;
 };
-const moveStr = (n) => (Number.isInteger(n) ? String(n) : n % 1 === 0.5 ? `${Math.floor(n) || ''}½` : n.toFixed(2).replace(/0$/, ''));
-const character = () => CHARACTERS.find((c) => c.id === state.characterId) || CHARACTERS[0];
+const secs = (ms) => (Math.max(0, ms) / 1000).toFixed(1) + 's';
+const num = (n) => String(Number(n.toFixed(2)));
+const payoutAt = (ms) => PAYOUT.find((p) => ms < p.until).pct;
 
 function portrait(canvas, sprite, scale = 5) {
   canvas.width = 12 * scale;
@@ -73,28 +125,61 @@ const ATTRIB = `<p class="attrib">Music previews and data from <a href="https://
 // ---------- screens ----------
 function render() {
   clearTimers();
-  if (state.screen === 'title') return renderTitle();
-  if (state.screen === 'select') return renderSelect();
-  if (state.screen === 'game') return renderGame();
-  if (state.screen === 'end') return renderEnd();
+  ({ title: renderTitle, mode: renderMode, select: renderSelect, game: renderGame, end: renderEnd })[state.screen]();
 }
 
 function renderTitle() {
   app.innerHTML = `
     <main class="screen title">
       ${LOGO}
-      <p class="tagline">The red room is packed and the crowd has turned. A track is playing. Name it, name the label, name the artist. Every right answer moves you closer to the exit.</p>
+      <p class="tagline">The red room is packed and the crowd has turned. A track is playing and you've got 10 seconds. Name it, name the label, name the artist. Every right answer moves you closer to the exit.</p>
       <button class="btn primary" id="go">Enter the club</button>
       ${useMock() ? '<p class="mocknote">Mock mode: offline test tracks, no audio.</p>' : ''}
       ${ATTRIB}
     </main>`;
-  document.getElementById('go').onclick = () => { state.screen = 'select'; render(); };
-  ensurePool().catch(() => {});
+  document.getElementById('go').onclick = () => { state.screen = 'mode'; render(); };
+}
+
+function renderMode() {
+  app.innerHTML = `
+    <main class="screen modes">
+      <h2 class="h2">Select difficulty</h2>
+      <ol class="modelist">
+        ${MODES.map((m, i) => `
+          <li>
+            <button class="mode ${m.id === state.modeId ? 'on' : ''}" data-id="${m.id}">
+              <span class="lvl">${i + 1} · ${esc(m.level)}</span>
+              <span class="mname">${esc(m.name)}</span>
+              <span class="mblurb">${esc(m.blurb)}</span>
+            </button>
+          </li>`).join('')}
+      </ol>
+      <div class="startrow">
+        <button class="btn primary" id="cont">Choose character</button>
+        <button class="btn ghost" id="back">Back</button>
+      </div>
+      ${ATTRIB}
+    </main>`;
+  app.querySelectorAll('.mode').forEach((b) => {
+    b.onclick = () => {
+      state.modeId = b.dataset.id;
+      save('sm_mode', b.dataset.id);
+      app.querySelectorAll('.mode').forEach((x) => x.classList.toggle('on', x === b));
+    };
+    b.ondblclick = () => document.getElementById('cont').click();
+  });
+  document.getElementById('back').onclick = () => { state.screen = 'title'; render(); };
+  document.getElementById('cont').onclick = () => {
+    state.screen = 'select';
+    render();
+  };
 }
 
 function renderSelect() {
+  const m = mode();
   app.innerHTML = `
     <main class="screen select">
+      <p class="modetag">${esc(m.level)} · ${esc(m.name)}</p>
       <h2 class="h2">Choose who's getting out</h2>
       <div class="cards">
         ${CHARACTERS.map((c) => `
@@ -122,31 +207,36 @@ function renderSelect() {
       app.querySelectorAll('.card').forEach((x) => x.classList.toggle('on', x === b));
     };
   });
-  document.getElementById('back').onclick = () => { state.screen = 'title'; render(); };
+  document.getElementById('back').onclick = () => { state.screen = 'mode'; render(); };
 
   const start = document.getElementById('start');
   const errEl = document.getElementById('poolerr');
-  const ready = () => { start.disabled = false; start.textContent = 'Start the run'; };
-  if (state.pool) ready();
-  else {
-    ensurePool().then(ready).catch((e) => {
-      errEl.hidden = false;
-      errEl.textContent = `Couldn't load tracks from Deezer (${e.message}).`;
-      start.disabled = false;
-      start.textContent = 'Try again';
-      start.onclick = () => { errEl.hidden = true; start.disabled = true; start.textContent = 'Loading tracks…'; ensurePool().then(() => { ready(); start.onclick = beginRun; }).catch(() => renderSelect()); };
-    });
-  }
   start.onclick = beginRun;
+  const load = () => {
+    start.disabled = true;
+    start.textContent = 'Loading tracks…';
+    errEl.hidden = true;
+    prepareNext()
+      .then(() => { start.disabled = false; start.textContent = 'Start the run'; start.onclick = beginRun; })
+      .catch((e) => {
+        errEl.hidden = false;
+        errEl.textContent = `Couldn't load tracks from Deezer (${e.message}).`;
+        start.disabled = false;
+        start.textContent = 'Try again';
+        start.onclick = load;
+      });
+  };
+  load();
 }
 
-// Must run synchronously inside the click so browsers allow audio to start.
+// Runs synchronously inside the click so the browser lets audio start.
 function beginRun() {
-  if (!state.pool) return;
-  const entry = state.pool[state.poolIndex % state.pool.length];
-  audio.src = entry.preview;
+  const first = takeNext();
+  if (!first) return;
+  audio.src = first.details.preview;
   audio.play().catch(() => {});
   state.run = {
+    mode: mode(),
     player: 0,
     shown: 0,
     horde: HORDE_START,
@@ -155,10 +245,10 @@ function beginRun() {
     history: [],
     over: false,
     paused: true,
-    firstEntry: entry,
   };
   state.screen = 'game';
   render();
+  startRound(first, true);
 }
 
 // ---------- game ----------
@@ -168,13 +258,19 @@ let last = 0;
 
 function renderGame() {
   const ch = character();
+  const zones = PAYOUT.map((p, i) => {
+    const from = i ? PAYOUT[i - 1].until : 0;
+    const to = Math.min(p.until, ROUND_MS);
+    return `<span class="z z${i}" style="width:${((to - from) / ROUND_MS) * 100}%"></span>`;
+  }).join('');
   app.innerHTML = `
     <main class="screen game">
       <header class="hud">
         <div class="stat"><span class="k">RUN</span><span class="v" id="runT">00:00.000</span></div>
-        <div class="stat mid"><span class="k">ROOM</span><span class="v" id="roomN">COAT CHECK</span></div>
-        <div class="stat right"><span class="k">THIS TRACK</span><span class="v" id="trackT">00:00.000</span></div>
+        <div class="stat mid"><span class="k">${esc(state.run.mode.name)}</span><span class="v" id="roomN">COAT CHECK</span></div>
+        <div class="stat right"><span class="k">CLOCK</span><span class="v" id="clockT">10.0s</span></div>
       </header>
+      <div class="clock" aria-hidden="true"><div class="zones">${zones}</div><div class="needle" id="needle"></div></div>
       <div class="stage">
         <canvas id="club" class="pix"></canvas>
         <div class="badge" id="emerging" hidden>EMERGING ×1.5</div>
@@ -187,20 +283,20 @@ function renderGame() {
         <li data-k="artist"><b>ARTIST</b> +1</li>
         <li data-k="credit"><b>FEAT / CREDIT</b> +½ <i id="creditCount">0/${CREDIT_CAP}</i></li>
       </ul>
+      <p class="payout">Answer in 0–3s for full moves · 3–5s 75% · 5–7s 50% · last 3s you don't move</p>
       <form class="guess" id="guessForm" autocomplete="off">
         <input id="guess" placeholder="Name the track, label or artist" maxlength="120" disabled>
-        <button type="button" class="btn small ghost" id="hintBtn" title="Costs you ground">Hint</button>
+        <button type="button" class="btn small ghost" id="hintBtn">Hint</button>
         <button type="button" class="btn small ghost" id="skipBtn" title="Esc">Skip</button>
       </form>
       <div class="hintline" id="hintline"></div>
       <ol class="feed" id="feed"></ol>
-      <div class="resume" id="resume" hidden><button class="btn primary" id="resumeBtn">Tap to keep the music going</button></div>
-      <p class="attrib small">${ch.name} · Previews via Deezer</p>
+      <div class="resume" id="resume" hidden><button class="btn primary" id="resumeBtn">Tap to start the music</button></div>
+      <p class="attrib small">${esc(ch.name)} · Previews via Deezer</p>
     </main>`;
 
   club = new Club(document.getElementById('club'), { accent: ACCENT });
-  const form = document.getElementById('guessForm');
-  form.onsubmit = (e) => { e.preventDefault(); submitGuess(); };
+  document.getElementById('guessForm').onsubmit = (e) => { e.preventDefault(); submitGuess(); };
   document.getElementById('hintBtn').onclick = useHint;
   document.getElementById('skipBtn').onclick = () => endRound('skip');
   document.getElementById('resumeBtn').onclick = () => {
@@ -212,21 +308,31 @@ function renderGame() {
   cancelAnimationFrame(raf);
   last = performance.now();
   raf = requestAnimationFrame(loop);
-  startRound(state.run.firstEntry);
 }
 
-async function startRound(entry) {
+async function startRound(nx, alreadyPlaying = false) {
   const run = state.run;
-  if (!entry) {
-    entry = state.pool[state.poolIndex % state.pool.length];
-    audio.src = entry.preview;
+  run.paused = true;
+  setInput(false);
+  document.getElementById('hintline').textContent = '';
+  if (!nx) {
+    try {
+      nx = next ? takeNext() : (await prepareNext(), takeNext());
+    } catch (e) {
+      feed(`Couldn't load the next track (${esc(e.message)}).`, 'miss');
+      return setTimeout(() => startRound(), 2000);
+    }
+    if (!nx || run.over || state.run !== run) return;
+  }
+  if (!alreadyPlaying) {
+    audio.src = nx.details.preview;
     audio.play().catch(() => { document.getElementById('resume').hidden = false; });
   }
-  run.paused = true;
+
+  const d = nx.details;
   const r = {
-    entry,
-    details: null,
-    sheet: null,
+    details: d,
+    sheet: answerSheet(d),
     solved: { track: false, label: false, artist: false, creditsHit: new Set() },
     startedAt: 0,
     elapsed: 0,
@@ -234,56 +340,33 @@ async function startRound(entry) {
     ended: false,
   };
   run.round = r;
-  setInput(false);
-  document.getElementById('hintline').textContent = '';
-  document.getElementById('emerging').hidden = !entry.emerging;
+  document.getElementById('emerging').hidden = !d.emerging;
   updateLegend();
-
-  try {
-    r.details = await roundDetails(entry);
-  } catch (e) {
-    feed(`Couldn't load that track (${e.message}). Next.`, 'miss');
-    state.poolIndex++;
-    return startRound();
-  }
-  if (run.round !== r) return;
-  r.sheet = answerSheet(r.details);
-  const creditsP = r.details._mockCredits ? Promise.resolve(r.details._mockCredits) : fetchCredits(r.details.isrc);
+  club.bpm = d.bpm;
+  const creditsP = d._mockCredits ? Promise.resolve(d._mockCredits) : fetchCredits(d.isrc);
   creditsP.then((names) => { if (run.round === r) addCredits(r.sheet, names); });
-  club.bpm = r.details.bpm;
 
+  // The clock starts when sound actually starts
   const go = () => {
-    if (run.round !== r || r.ended) return;
+    if (run.round !== r || r.ended || run.over) return;
     r.startedAt = performance.now();
     run.paused = false;
     setInput(true);
   };
-  if (!audio.paused && audio.currentTime > 0) go();
-  else {
-    audio.onplaying = () => { audio.onplaying = null; go(); };
-    // silent mock audio never "plays" in a meaningful way
-    if (useMock()) setTimeout(go, 300);
-  }
-  if (useMock()) {
-    audio.onended = null;
-    setTimeout(() => { if (run.round === r) endRound('time'); }, 30000);
-  } else {
-    audio.onended = () => { if (run.round === r) endRound('time'); };
-    // If the browser blocked playback, offer a tap to start it
-    setTimeout(() => {
-      if (run.round === r && !r.ended && audio.paused) document.getElementById('resume').hidden = false;
-    }, 1500);
-  }
+  audio.onplaying = null;
+  if (useMock() || (!audio.paused && audio.currentTime > 0)) go();
+  else audio.onplaying = () => { audio.onplaying = null; go(); };
+
   audio.onerror = () => {
-    if (run.round !== r) return;
-    if (r.details.preview && audio.src !== r.details.preview) {
-      audio.src = r.details.preview;
-      audio.play().catch(() => { document.getElementById('resume').hidden = false; });
-    } else {
-      feed('That preview would not play. Next track.', 'miss');
-      endRound('error');
-    }
+    if (run.round !== r || r.ended) return;
+    feed('That preview would not play. Next track.', 'miss');
+    endRound('error', true);
   };
+  if (!useMock()) {
+    setTimeout(() => {
+      if (run.round === r && !r.ended && !r.startedAt) document.getElementById('resume').hidden = false;
+    }, 1800);
+  }
 }
 
 function setInput(on) {
@@ -298,20 +381,24 @@ function submitGuess() {
   const r = run?.round;
   const input = document.getElementById('guess');
   const g = input.value.trim();
-  if (!r || !r.sheet || run.paused || !g) return;
-  if (g === '?') { input.value = ''; return useHint(); }
+  if (!r || r.ended || run.paused || !g) return;
   input.value = '';
+  if (g === '?') return useHint();
 
+  const t = performance.now() - r.startedAt;
   const res = judge(g, r.sheet, r.solved, r.details.emerging);
-  const t = fmt(performance.now() - r.startedAt);
-  if (res.kind === 'track' || res.kind === 'label' || res.kind === 'artist') {
-    r.solved[res.kind] = true;
-    advance(res.moves);
-    feed(`${res.kind.toUpperCase()} +${moveStr(res.moves)} at ${t}`, 'hit');
-  } else if (res.kind === 'credit') {
-    r.solved.creditsHit.add(res.name);
-    advance(res.moves);
-    feed(`CREDIT +${moveStr(res.moves)} at ${t}`, 'hit');
+  if (['track', 'label', 'artist', 'credit'].includes(res.kind)) {
+    if (res.kind === 'credit') r.solved.creditsHit.add(res.name);
+    else r.solved[res.kind] = true;
+    const pct = payoutAt(t);
+    const moves = res.moves * pct;
+    const label = res.kind === 'credit' ? 'CREDIT' : res.kind.toUpperCase();
+    if (moves > 0) {
+      advance(moves);
+      feed(`${label} +${num(moves)} at ${secs(t)}${pct < 1 ? ` (${pct * 100}%)` : ''}`, 'hit');
+    } else {
+      feed(`${label} right at ${secs(t)}, too late to move.`, 'dim');
+    }
   } else if (res.kind === 'dupe') {
     feed('Already got that one.', 'dim');
   } else if (res.kind === 'miss') {
@@ -321,41 +408,39 @@ function submitGuess() {
   }
   updateLegend();
   const s = r.solved;
-  if (s.track && s.label && s.artist) setTimeout(() => endRound('cleared'), 600);
+  if (s.track && s.label && s.artist) setTimeout(() => endRound('cleared'), 500);
 }
 
 function useHint() {
   const r = state.run?.round;
-  if (!r || !r.details || r.hinted || state.run.paused) return;
+  if (!r || r.hinted || state.run.paused || r.ended) return;
   r.hinted = true;
   state.run.horde += HINT_COST;
   document.getElementById('hintline').textContent = hintText(r.details);
-  feed(`Hint used. The horde gains ${moveStr(HINT_COST)}.`, 'miss');
+  feed(`Hint used. The horde gains ${num(HINT_COST)}.`, 'miss');
 }
 
 function advance(m) {
   state.run.player = Math.min(EXIT_MOVES, state.run.player + m);
 }
 
-function endRound(why) {
+function endRound(why, silent = false) {
   const run = state.run;
   const r = run?.round;
   if (!r || r.ended || run.over) return;
   r.ended = true;
   run.paused = true;
   setInput(false);
-  audio.onended = null;
-  audio.pause();
-  state.poolIndex++;
-  run.history.push({ details: r.details, solved: { ...r.solved, credits: r.solved.creditsHit.size }, time: r.elapsed, why });
-  if (run.player >= EXIT_MOVES) return; // loop handles the win once the walk finishes
-  showReveal(r, () => startRound());
+  run.history.push({ details: r.details, solved: r.solved, why });
+  if (run.player >= EXIT_MOVES) return; // the loop finishes the walk and ends the run
+  if (silent) { audio.pause(); return startRound(); }
+  if (why === 'time') feed("Time's up.", 'dim');
+  showReveal(r); // the preview keeps playing under the reveal
 }
 
-function showReveal(r, next) {
+function showReveal(r) {
   const el = document.getElementById('reveal');
   const d = r.details;
-  if (!d) return next();
   const s = r.solved;
   const mark = (ok) => (ok ? '<em class="ok">got it</em>' : '<em class="no">missed</em>');
   el.innerHTML = `
@@ -365,28 +450,29 @@ function showReveal(r, next) {
         <p class="rk">That was</p>
         <p class="rtitle">${esc(d.title)} ${mark(s.track)}</p>
         <p class="rline">${esc(d.mainArtists.join(', '))} ${mark(s.artist)}${d.featuredArtists.length ? ` <span class="dim">with ${esc(d.featuredArtists.join(', '))}</span>` : ''}</p>
-        <p class="rline">${esc(d.label || 'Label not listed')} ${d.label ? mark(s.label) : ''}</p>
+        <p class="rline">${esc(d.label || 'Label not listed')} ${d.label ? mark(s.label) : ''}${d.releaseDate ? ` <span class="dim">· ${esc(d.releaseDate.slice(0, 4))}</span>` : ''}</p>
         <p class="rlinks"><a href="${esc(d.link)}" target="_blank" rel="noopener">Listen on Deezer</a> <button class="linkbtn" id="nextBtn">Next track</button></p>
       </div>
     </div>`;
   el.hidden = false;
   let done = false;
-  const go = () => {
-    if (done) return;
+  const go = (nx, playing = false) => {
+    if (done || state.run?.over) return;
     done = true;
     el.hidden = true;
-    next();
+    startRound(nx, playing);
   };
   document.getElementById('nextBtn').onclick = () => {
-    // a click is a user gesture, so audio for the next track is guaranteed to start
-    const entry = state.pool[state.poolIndex % state.pool.length];
-    audio.src = entry.preview;
-    audio.play().catch(() => {});
-    done = true;
-    el.hidden = true;
-    startRound(entry);
+    // a click is a user gesture, so starting audio here always works
+    if (next) {
+      const nx = takeNext();
+      audio.src = nx.details.preview;
+      audio.play().catch(() => {});
+      return go(nx, true);
+    }
+    go();
   };
-  setTimeout(go, REVEAL_MS);
+  setTimeout(() => go(), REVEAL_MS);
 }
 
 function loop(now) {
@@ -394,14 +480,17 @@ function loop(now) {
   if (state.screen !== 'game' || !run) return;
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  const r = run.round;
 
   if (!run.paused && !run.over) {
     run.activeMs += dt * 1000;
-    const room = roomIndexAt(run.horde);
-    run.horde += dt / HORDE_SEC_PER_MOVE[Math.max(0, room)];
-    if (run.round && run.round.startedAt) run.round.elapsed = now - run.round.startedAt;
+    const room = Math.max(0, roomIndexAt(run.horde));
+    run.horde += dt / (HORDE_SEC_PER_MOVE[room] * run.mode.hordePace);
+    if (r?.startedAt) {
+      r.elapsed = now - r.startedAt;
+      if (r.elapsed >= ROUND_MS) endRound('time');
+    }
   }
-  // walk the player toward their earned position
   const walking = run.shown < run.player - 0.01;
   if (walking) run.shown = Math.min(run.player, run.shown + WALK_SPEED * dt);
 
@@ -420,8 +509,12 @@ function loop(now) {
     danger: Math.max(0, Math.min(1, 1 - (run.shown - run.horde) / 6)),
   });
 
+  const el = r?.startedAt ? Math.min(ROUND_MS, r.elapsed) : 0;
   document.getElementById('runT').textContent = fmt(run.activeMs);
-  document.getElementById('trackT').textContent = fmt(run.round?.elapsed || 0);
+  const clock = document.getElementById('clockT');
+  clock.textContent = secs(ROUND_MS - el);
+  clock.dataset.zone = PAYOUT.findIndex((p) => el < p.until);
+  document.getElementById('needle').style.left = `${(el / ROUND_MS) * 100}%`;
   document.getElementById('roomN').textContent = ROOMS[roomIndexAt(run.shown)].name;
   raf = requestAnimationFrame(loop);
 }
@@ -432,6 +525,7 @@ function caught() {
   run.result = 'caught';
   audio.pause();
   setInput(false);
+  document.getElementById('reveal').hidden = true;
   const scare = document.getElementById('scare');
   drawJumpscare(scare);
   scare.hidden = false;
@@ -446,9 +540,9 @@ function escaped() {
   audio.pause();
   if (run.round && !run.round.ended) {
     run.round.ended = true;
-    run.history.push({ details: run.round.details, solved: { ...run.round.solved, credits: run.round.solved.creditsHit.size } });
+    run.history.push({ details: run.round.details, solved: run.round.solved });
   }
-  const key = `sm_best_${state.characterId}`;
+  const key = `sm_best_${run.mode.id}_${state.characterId}`;
   const best = Number(load(key, 0));
   run.newBest = !best || run.activeMs < best;
   if (run.newBest) save(key, String(Math.round(run.activeMs)));
@@ -465,13 +559,14 @@ function finish() {
 function renderEnd() {
   const run = state.run;
   const won = run.result === 'escaped';
-  const best = Number(load(`sm_best_${state.characterId}`, 0));
+  const best = Number(load(`sm_best_${run.mode.id}_${state.characterId}`, 0));
   const heard = run.history.filter((h) => h.details);
   app.innerHTML = `
     <main class="screen end">
+      <p class="modetag">${esc(run.mode.level)} · ${esc(run.mode.name)}</p>
       <h2 class="result ${won ? 'win' : 'lose'}">${won ? 'You got out' : 'They got you'}</h2>
-      <p class="sub">${won ? `${esc(character().name)} made the back exit in <b>${fmt(run.activeMs)}</b>.${run.newBest ? ' New best.' : ''}` : `${esc(character().name)} went down in the ${esc(ROOMS[roomIndexAt(run.shown)].name.toLowerCase())}, ${moveStr(Math.max(0, EXIT_MOVES - run.player))} moves from the exit.`}</p>
-      ${best ? `<p class="sub dim">Best escape with ${esc(character().name)}: ${fmt(best)}</p>` : ''}
+      <p class="sub">${won ? `${esc(character().name)} made the back exit in <b>${fmt(run.activeMs)}</b>.${run.newBest ? ' New best.' : ''}` : `${esc(character().name)} went down in the ${esc(ROOMS[roomIndexAt(run.shown)].name.toLowerCase())}, ${num(Math.max(0, EXIT_MOVES - run.player))} moves from the exit.`}</p>
+      ${best ? `<p class="sub dim">Best escape on ${esc(run.mode.name)} with ${esc(character().name)}: ${fmt(best)}</p>` : ''}
       ${heard.length ? `
         <h3 class="h3">What you heard tonight</h3>
         <ul class="heard">
@@ -483,13 +578,17 @@ function renderEnd() {
             </li>`).join('')}
         </ul>` : ''}
       <div class="startrow">
-        <button class="btn primary" id="again">Run it back</button>
+        <button class="btn primary" id="again" ${next ? '' : 'disabled'}>Run it back</button>
         <button class="btn ghost" id="chars">Change character</button>
+        <button class="btn ghost" id="modes">Change difficulty</button>
       </div>
       ${ATTRIB}
     </main>`;
-  document.getElementById('again').onclick = beginRun;
+  const again = document.getElementById('again');
+  again.onclick = beginRun;
+  if (!next) prepareNext().then(() => { again.disabled = false; }).catch(() => {});
   document.getElementById('chars').onclick = () => { state.screen = 'select'; render(); };
+  document.getElementById('modes').onclick = () => { state.screen = 'mode'; render(); };
 }
 
 // ---------- ui bits ----------
@@ -504,8 +603,7 @@ function feed(html, cls = '') {
 }
 
 function updateLegend() {
-  const r = state.run?.round;
-  const s = r?.solved;
+  const s = state.run?.round?.solved;
   document.querySelectorAll('#legend li').forEach((li) => {
     const k = li.dataset.k;
     const on = s && (k === 'credit' ? s.creditsHit.size >= CREDIT_CAP : s[k]);
@@ -524,6 +622,4 @@ function shake() {
 }
 
 render();
-
-// exported for quick console poking during development
-window.__sm = { state, MOVES, EMERGING_MULT };
+window.__sm = { state };

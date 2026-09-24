@@ -12,6 +12,8 @@ const ALLOWED = [
   /^album\/\d+\/tracks$/,
   /^track\/\d+$/,
   /^search$/,
+  /^search\/playlist$/,
+  /^playlist\/\d+\/tracks$/,
 ];
 
 const PASS_PARAMS = ['limit', 'index', 'q'];
