@@ -31,17 +31,26 @@ async function apiFetch(path, options = {}) {
 // search, where they silently return nothing). Mix a few angles for variety; "Emerging"
 // leans on a recent year range as a rough proxy for newer releases since there's no public
 // "new/rising" flag on Track Search itself.
+//
+// NOTE: as of late 2025, Spotify caps `limit` at 10 (not the documented 50) for apps that
+// aren't in Extended Quota Mode — sending anything higher gets a flat 400 "Invalid limit".
+// More queries, smaller pages, still plenty of candidate tracks.
+const SEARCH_LIMIT_CAP = 10;
+
 const DISCOVERY_QUERIES = [
   { label: 'Trending', q: 'genre:dance' },
   { label: 'Trending', q: 'genre:edm' },
   { label: 'Trending', q: 'genre:house' },
+  { label: 'Trending', q: 'genre:pop dance' },
   { label: 'Emerging', q: 'genre:"future house" year:2025-2026' },
   { label: 'Emerging', q: 'genre:"tech house" year:2025-2026' },
+  { label: 'Emerging', q: 'genre:"progressive house" year:2025-2026' },
   { label: 'Big Room', q: 'genre:"big room"' },
 ];
 
-export async function searchTracks(query, limit = 20) {
-  const params = new URLSearchParams({ q: query, type: 'track', limit: String(limit) });
+export async function searchTracks(query, limit = SEARCH_LIMIT_CAP) {
+  const cappedLimit = Math.min(limit, SEARCH_LIMIT_CAP);
+  const params = new URLSearchParams({ q: query, type: 'track', limit: String(cappedLimit) });
   const json = await apiFetch(`/search?${params.toString()}`);
   return (json.tracks?.items || []).filter((t) => t && t.uri && t.uri.startsWith('spotify:track:'));
 }
@@ -52,7 +61,7 @@ export async function loadDiscoveryQueue({ trackCount = 20 } = {}) {
   const collected = [];
   for (const dq of DISCOVERY_QUERIES) {
     try {
-      const tracks = await searchTracks(dq.q, 15);
+      const tracks = await searchTracks(dq.q, SEARCH_LIMIT_CAP);
       collected.push(...tracks.map((t) => ({ ...t, discoveredVia: dq.label })));
     } catch (e) {
       console.warn(`Discovery query "${dq.label}" (${dq.q}) failed:`, e.message);
